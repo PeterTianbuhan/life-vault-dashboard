@@ -180,6 +180,10 @@
   width: 100%;
 }
 
+.life-vault-field--compact {
+  margin-bottom: 0;
+}
+
 .life-vault-toggle {
   display: flex;
   align-items: center;
@@ -211,6 +215,14 @@
   min-height: 38px;
   padding-inline: 14px;
   font-weight: 650;
+}
+
+.life-vault-task-controls {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) minmax(0, 1fr);
+  gap: 10px;
+  align-items: end;
+  margin-bottom: 12px;
 }
 
 .life-vault-preview {
@@ -503,6 +515,7 @@
 
   .life-vault-steps,
   .life-vault-status-grid,
+  .life-vault-task-controls,
   .life-vault-search-controls {
     grid-template-columns: 1fr;
   }

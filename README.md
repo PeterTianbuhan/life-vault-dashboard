@@ -10,7 +10,7 @@ The current version focuses on a beginner-friendly GitHub sync card, a plain che
 - Chinese-first dashboard UI for shared vault GitHub sync.
 - Beginner-friendly sync status with safe buttons for checking, pulling, saving, and pushing.
 - Upload preview before committing changes.
-- Plain todo board generated from Markdown checkbox tasks.
+- Plain todo board generated from Markdown checkbox tasks, with filtering by root-node source.
 - Time-based content lookup using `created` frontmatter.
 - Optional `created` frontmatter for new Markdown files, including repairing empty `created:` placeholders.
 - Conservative `updated` maintenance: before committing, only Markdown files that Git already reports as changed get their `updated` value refreshed.

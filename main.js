@@ -13,6 +13,7 @@ const DEFAULT_SETTINGS = {
   repoUrl: "",
   lastCommitMessage: "",
   autoCreatedFrontmatter: false,
+  todoRootFilter: "all",
 };
 
 function trimOutput(value) {
@@ -361,6 +362,113 @@ function parseTasksFromMarkdown(file, content) {
   return tasks;
 }
 
+function noteDisplayName(path) {
+  const fileName = path.split("/").pop() || path;
+  return fileName.replace(/\.md$/i, "");
+}
+
+function markdownStem(path) {
+  return path.replace(/\.md$/i, "");
+}
+
+function wikiLinkTargets(content) {
+  const targets = [];
+  const body = stripFrontmatter(content);
+  const pattern = /\[\[([^\]]+)\]\]/g;
+  let match;
+
+  while ((match = pattern.exec(body))) {
+    const target = match[1].split("|")[0].split("#")[0].trim();
+    if (target) targets.push(target);
+  }
+
+  return targets;
+}
+
+function canonicalMarkdownPath(target) {
+  const normalized = normalizePath(target);
+  return normalized.toLowerCase().endsWith(".md") ? normalized : `${normalized}.md`;
+}
+
+function resolveWikiTarget(target, pathSet, basenameIndex) {
+  const directPath = canonicalMarkdownPath(target);
+  if (pathSet.has(directPath)) return directPath;
+
+  const basename = noteDisplayName(directPath).toLowerCase();
+  const matches = basenameIndex.get(basename) || [];
+  return matches.length === 1 ? matches[0] : "";
+}
+
+function addRootOwner(ownerByPath, path, rootId) {
+  const owners = ownerByPath.get(path) || [];
+  if (!owners.includes(rootId)) owners.push(rootId);
+  ownerByPath.set(path, owners);
+}
+
+function buildTodoRootIndex(files, contentByPath) {
+  const paths = files.map((file) => file.path).sort((a, b) => a.localeCompare(b, "zh-Hans-CN"));
+  const pathSet = new Set(paths);
+  const basenameIndex = new Map();
+
+  for (const path of paths) {
+    const key = noteDisplayName(path).toLowerCase();
+    const matches = basenameIndex.get(key) || [];
+    matches.push(path);
+    basenameIndex.set(key, matches);
+  }
+
+  const linksByPath = new Map();
+  for (const path of paths) {
+    const content = contentByPath.get(path) || "";
+    const links = wikiLinkTargets(content)
+      .map((target) => resolveWikiTarget(target, pathSet, basenameIndex))
+      .filter(Boolean);
+    linksByPath.set(path, Array.from(new Set(links)));
+  }
+
+  const homePath = pathSet.has("00-Home.md") ? "00-Home.md" : "";
+  const rootPaths = [];
+  const homeLinks = homePath ? linksByPath.get(homePath) || [] : [];
+  for (const path of homeLinks) {
+    if (path !== homePath && !rootPaths.includes(path)) rootPaths.push(path);
+  }
+
+  if (!rootPaths.length) {
+    for (const path of paths) {
+      if (!path.includes("/") && path !== homePath) rootPaths.push(path);
+    }
+  }
+
+  const roots = rootPaths.map((path) => ({ id: path, label: noteDisplayName(path) }));
+  const ownerByPath = new Map();
+
+  for (const root of roots) {
+    const queue = [root.id];
+    const visited = new Set();
+
+    while (queue.length) {
+      const path = queue.shift();
+      if (!pathSet.has(path) || visited.has(path)) continue;
+      visited.add(path);
+      addRootOwner(ownerByPath, path, root.id);
+
+      const folderPrefix = `${markdownStem(path)}/`;
+      for (const candidate of paths) {
+        if (candidate.startsWith(folderPrefix)) queue.push(candidate);
+      }
+
+      for (const linkedPath of linksByPath.get(path) || []) {
+        if (linkedPath === homePath) continue;
+        if (linkedPath !== root.id && rootPaths.includes(linkedPath)) continue;
+        queue.push(linkedPath);
+      }
+    }
+  }
+
+  const rootById = new Map(roots.map((root) => [root.id, root]));
+  return { roots, ownerByPath, rootById };
+}
+
 class LifeVaultDashboardView extends ItemView {
   constructor(leaf, plugin) {
     super(leaf);
@@ -529,10 +637,20 @@ class LifeVaultDashboardView extends ItemView {
 
     card.createDiv({
       cls: "life-vault-card__hint",
-      text: "扫描全部笔记里的 checkbox 待办，只按是否完成显示卡片，不读取标签。",
+      text: "扫描 checkbox 待办，可按 00-Home 的根节点来源筛选，不读取标签。",
     });
 
-    const actions = card.createDiv({ cls: "life-vault-actions" });
+    const controls = card.createDiv({ cls: "life-vault-task-controls" });
+    const rootField = controls.createDiv({ cls: "life-vault-field life-vault-field--compact" });
+    rootField.createEl("label", { text: "显示范围" });
+    this.todoRootSelect = rootField.createEl("select");
+    this.todoRootSelect.addEventListener("change", async () => {
+      this.plugin.settings.todoRootFilter = this.todoRootSelect.value;
+      await this.plugin.saveSettings();
+      await this.runTodoBoard();
+    });
+
+    const actions = controls.createDiv({ cls: "life-vault-actions" });
     this.addSearchButton(actions, "刷新待办", "list-checks", () => this.runTodoBoard());
 
     this.todoBoardBodyEl = card.createDiv({ cls: "life-vault-task-board" });
@@ -733,22 +851,56 @@ class LifeVaultDashboardView extends ItemView {
   }
 
   async runTodoBoard() {
-    const tasks = await this.plugin.getTodoTasks();
-    this.renderTodoBoard(tasks);
+    const board = await this.plugin.getTodoTasks();
+    this.renderTodoBoard(board);
   }
 
-  renderTodoBoard(tasks) {
+  renderTodoRootOptions(roots) {
+    if (!this.todoRootSelect) return "all";
+
+    const selected = this.plugin.settings.todoRootFilter || "all";
+    const hasSelected = selected === "all" || roots.some((root) => root.id === selected);
+    const nextSelected = hasSelected ? selected : "all";
+
+    this.todoRootSelect.empty();
+    this.todoRootSelect.createEl("option", {
+      attr: { value: "all" },
+      text: "全部根节点",
+    });
+
+    for (const root of roots) {
+      this.todoRootSelect.createEl("option", {
+        attr: { value: root.id },
+        text: root.label,
+      });
+    }
+
+    this.todoRootSelect.value = nextSelected;
+    return nextSelected;
+  }
+
+  renderTodoBoard(board) {
     if (!this.todoBoardBodyEl) return;
 
-    const openTasks = tasks.filter((task) => !task.checked);
-    const doneTasks = tasks.filter((task) => task.checked);
-    this.todoBoardMetaEl?.setText(`${openTasks.length} 个未完成，${doneTasks.length} 个已完成`);
+    const tasks = Array.isArray(board) ? board : board.tasks || [];
+    const roots = Array.isArray(board) ? [] : board.roots || [];
+    const selectedRoot = this.renderTodoRootOptions(roots);
+    const visibleTasks = selectedRoot === "all"
+      ? tasks
+      : tasks.filter((task) => task.rootIds.includes(selectedRoot));
+    const selectedRootLabel = selectedRoot === "all"
+      ? "全部根节点"
+      : roots.find((root) => root.id === selectedRoot)?.label || "当前范围";
+
+    const openTasks = visibleTasks.filter((task) => !task.checked);
+    const doneTasks = visibleTasks.filter((task) => task.checked);
+    this.todoBoardMetaEl?.setText(`${selectedRootLabel}，${openTasks.length} 个未完成，${doneTasks.length} 个已完成`);
 
     this.todoBoardBodyEl.empty();
     if (!openTasks.length) {
       this.todoBoardBodyEl.createDiv({
         cls: "life-vault-empty",
-        text: "没有未完成待办。",
+        text: "这个范围里没有未完成待办。",
       });
     } else {
       const list = this.todoBoardBodyEl.createDiv({ cls: "life-vault-task-list" });
@@ -790,7 +942,7 @@ class LifeVaultDashboardView extends ItemView {
     }
     card.createDiv({
       cls: "life-vault-task-card__source",
-      text: `${task.path}:${task.line}`,
+      text: `${task.rootLabels.length ? task.rootLabels.join(" / ") : "未归类"} · ${task.path}:${task.line}`,
     });
     card.addEventListener("click", () => {
       this.app.workspace.getLeaf(false).openFile(task.file);
@@ -1129,17 +1281,31 @@ module.exports = class LifeVaultDashboardPlugin extends Plugin {
   }
 
   async getTodoTasks() {
-    const tasks = [];
-    for (const file of this.app.vault.getMarkdownFiles()) {
-      const content = await this.app.vault.cachedRead(file);
-      tasks.push(...parseTasksFromMarkdown(file, content));
+    const files = this.app.vault.getMarkdownFiles();
+    const contentByPath = new Map();
+
+    for (const file of files) {
+      contentByPath.set(file.path, await this.app.vault.cachedRead(file));
     }
 
-    return tasks.sort((a, b) => {
+    const rootIndex = buildTodoRootIndex(files, contentByPath);
+    const tasks = [];
+    for (const file of files) {
+      const rootIds = rootIndex.ownerByPath.get(file.path) || [];
+      const rootLabels = rootIds.map((id) => rootIndex.rootById.get(id)?.label || noteDisplayName(id));
+      const content = contentByPath.get(file.path) || "";
+      for (const task of parseTasksFromMarkdown(file, content)) {
+        tasks.push({ ...task, rootIds, rootLabels });
+      }
+    }
+
+    const sortedTasks = tasks.sort((a, b) => {
       if (a.checked !== b.checked) return a.checked ? 1 : -1;
       if (a.path !== b.path) return a.path.localeCompare(b.path, "zh-Hans-CN");
       return a.line - b.line;
     });
+
+    return { tasks: sortedTasks, roots: rootIndex.roots };
   }
 
   async updateChangedMarkdownTimestamps(changedFiles) {
