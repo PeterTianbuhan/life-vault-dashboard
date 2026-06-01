@@ -1,0 +1,33 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Build release package
+        run: |
+          mkdir -p dist
+          cp main.js manifest.json styles.css versions.json dist/
+          cd dist
+          zip life-vault-dashboard.zip main.js manifest.json styles.css versions.json
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/main.js
+            dist/manifest.json
+            dist/styles.css
+            dist/versions.json
+            dist/life-vault-dashboard.zip

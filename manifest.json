@@ -1,0 +1,9 @@
+{
+  "id": "life-vault-dashboard",
+  "name": "Life Vault 同步面板",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "面向共享 Obsidian 仓库的可视化 GitHub 同步面板。",
+  "author": "PeterTianbuhan",
+  "isDesktopOnly": true
+}
