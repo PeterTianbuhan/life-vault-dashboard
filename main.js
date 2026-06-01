@@ -167,6 +167,35 @@ function formatDateTime(ms) {
   return `${formatDateKey(date)} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+function gitExecutables() {
+  const platform = typeof process !== "undefined" ? process.platform : "";
+
+  if (platform === "win32") {
+    return [
+      "git",
+      "git.exe",
+      "C:\\Program Files\\Git\\cmd\\git.exe",
+      "C:\\Program Files (x86)\\Git\\cmd\\git.exe",
+    ];
+  }
+
+  if (platform === "darwin") {
+    return ["/usr/bin/git", "git", "/opt/homebrew/bin/git", "/usr/local/bin/git"];
+  }
+
+  return ["git", "/usr/bin/git", "/usr/local/bin/git"];
+}
+
+function friendlyGitError(error) {
+  if (error?.code === "ENOENT") {
+    if (typeof process !== "undefined" && process.platform === "win32") {
+      return "没有找到 Git。请先安装 Git for Windows，并确认 Obsidian 重启后能在系统 PATH 中找到 git。";
+    }
+    return "没有找到 Git。请先安装 Git，并确认 Obsidian 能在系统 PATH 中找到 git。";
+  }
+  return "";
+}
+
 function dailyDateFromPath(path) {
   const match = path.match(/^日记\/(\d{4}-\d{2}-\d{2})\.md$/);
   return match ? match[1] : "";
@@ -852,9 +881,17 @@ module.exports = class LifeVaultDashboardPlugin extends Plugin {
 
   runGit(args, options = {}) {
     const cwd = normalizePath(this.getRepoPath());
-    return new Promise((resolve, reject) => {
+    const candidates = gitExecutables();
+
+    const tryGit = (index, lastError) => new Promise((resolve, reject) => {
+      const executable = candidates[index];
+      if (!executable) {
+        reject(lastError || new Error("Git executable not found"));
+        return;
+      }
+
       childProcess.execFile(
-        "/usr/bin/git",
+        executable,
         args,
         {
           cwd,
@@ -866,8 +903,14 @@ module.exports = class LifeVaultDashboardPlugin extends Plugin {
             stdout: stdout || "",
             stderr: stderr || "",
           };
+          if (error && error.code === "ENOENT" && index < candidates.length - 1) {
+            tryGit(index + 1, error).then(resolve, reject);
+            return;
+          }
+
           if (error) {
             error.gitResult = result;
+            error.gitExecutable = executable;
             reject(error);
             return;
           }
@@ -875,6 +918,8 @@ module.exports = class LifeVaultDashboardPlugin extends Plugin {
         }
       );
     });
+
+    return tryGit(0);
   }
 
   async searchFilesByDate(query) {
@@ -1010,6 +1055,9 @@ module.exports = class LifeVaultDashboardPlugin extends Plugin {
   }
 
   formatGitError(error) {
+    const friendly = friendlyGitError(error);
+    if (friendly) return friendly;
+
     const result = error.gitResult || {};
     return (
       trimOutput(result.stderr) ||

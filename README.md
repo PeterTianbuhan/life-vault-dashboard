@@ -14,6 +14,14 @@ The first version focuses on a beginner-friendly GitHub sync card and a time-bas
 - Automatic `created` and `updated` frontmatter maintenance for Markdown files.
 - Long result lists use scrollable panels so the dashboard stays compact.
 
+## Requirements
+
+- Obsidian desktop.
+- Git installed and available on PATH.
+- Windows users should install [Git for Windows](https://git-scm.com/download/win), then restart Obsidian.
+
+The plugin is desktop-only because the sync card runs local Git commands.
+
 ## Installation
 
 ### BRAT
