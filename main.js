@@ -216,6 +216,12 @@ function dailyDateFromPath(path) {
   return match ? match[1] : "";
 }
 
+function createdTimestampForFile(file) {
+  const diaryDate = dailyDateFromPath(file.path);
+  if (diaryDate) return `${diaryDate} 00:00`;
+  return formatDateTime(file.stat.ctime || Date.now());
+}
+
 function stripFrontmatter(content) {
   if (content.startsWith("---\n")) {
     const end = content.indexOf("\n---", 4);
@@ -265,7 +271,12 @@ function withCreatedFrontmatter(content, created) {
   const end = frontmatterEndIndex(content);
   if (end !== -1) {
     const block = frontmatterBlock(content);
-    if (/^created:\s*/m.test(block)) return content;
+    const match = block.match(/^created:\s*(.*)$/m);
+    if (match?.[1]?.trim()) return content;
+    if (match) {
+      const nextBlock = block.replace(/^created:\s*.*$/m, `created: ${created}`);
+      return `---\n${nextBlock}${content.slice(end)}`;
+    }
     return `---\ncreated: ${created}\n${content.slice(4)}`;
   }
   return `---\ncreated: ${created}\n---\n\n${content}`;
@@ -1149,7 +1160,7 @@ module.exports = class LifeVaultDashboardPlugin extends Plugin {
 
   async ensureTimestampFrontmatter(file, options = {}) {
     const content = await this.app.vault.read(file);
-    const created = formatDateTime(file.stat.ctime || Date.now());
+    const created = createdTimestampForFile(file);
     const updated = formatDateTime(Date.now());
     let nextContent = withCreatedFrontmatter(content, created);
     if (options.updateUpdated !== false) {

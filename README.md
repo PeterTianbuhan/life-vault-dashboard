@@ -12,7 +12,7 @@ The current version focuses on a beginner-friendly GitHub sync card, a plain che
 - Upload preview before committing changes.
 - Plain todo board generated from Markdown checkbox tasks.
 - Time-based content lookup using `created` frontmatter.
-- Optional `created` frontmatter for new Markdown files.
+- Optional `created` frontmatter for new Markdown files, including repairing empty `created:` placeholders.
 - Conservative `updated` maintenance: before committing, only Markdown files that Git already reports as changed get their `updated` value refreshed.
 - Long result lists use scrollable panels so the dashboard stays compact.
 
