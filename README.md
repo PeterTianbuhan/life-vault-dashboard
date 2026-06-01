@@ -3,15 +3,17 @@
 Life Vault Dashboard is an Obsidian desktop plugin for shared vault workflows.
 It started as a personal dashboard for a shared vault maintained by Peter and his partner, with the goal of turning GitHub sync, time-based lookup, and local note operations into safe visual actions.
 
-The first version focuses on a beginner-friendly GitHub sync card and a time-based content search card.
+The current version focuses on a beginner-friendly GitHub sync card, a plain checkbox todo board, and a time-based content search card.
 
 ## Features
 
 - Chinese-first dashboard UI for shared vault GitHub sync.
 - Beginner-friendly sync status with safe buttons for checking, pulling, saving, and pushing.
 - Upload preview before committing changes.
+- Plain todo board generated from Markdown checkbox tasks.
 - Time-based content lookup using `created` frontmatter.
-- Automatic `created` and `updated` frontmatter maintenance for Markdown files.
+- Optional `created` frontmatter for new Markdown files.
+- Conservative `updated` maintenance: before committing, only Markdown files that Git already reports as changed get their `updated` value refreshed.
 - Long result lists use scrollable panels so the dashboard stays compact.
 
 ## Requirements

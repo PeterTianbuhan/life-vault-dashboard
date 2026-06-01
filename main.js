@@ -12,7 +12,7 @@ const VIEW_TYPE = "life-vault-dashboard-view";
 const DEFAULT_SETTINGS = {
   repoUrl: "",
   lastCommitMessage: "",
-  autoCreatedFrontmatter: true,
+  autoCreatedFrontmatter: false,
 };
 
 function trimOutput(value) {
@@ -108,7 +108,22 @@ function parsePorcelainLine(line) {
   if (path.includes(" -> ")) {
     path = path.split(" -> ").pop().trim();
   }
+  path = decodePorcelainPath(path);
   return { status, path };
+}
+
+function decodePorcelainPath(path) {
+  const trimmed = path.trim();
+  if (!trimmed.startsWith("\"") || !trimmed.endsWith("\"")) return trimmed;
+
+  try {
+    return JSON.parse(trimmed);
+  } catch {
+    return trimmed
+      .slice(1, -1)
+      .replace(/\\"/g, "\"")
+      .replace(/\\\\/g, "\\");
+  }
 }
 
 function actionLabel(status) {
@@ -284,6 +299,57 @@ function excerptFromMarkdown(content) {
   return line.length > 110 ? `${line.slice(0, 110)}...` : line;
 }
 
+function cleanTaskText(value) {
+  const withoutBlockId = value.replace(/\s+\^[A-Za-z0-9_-]+/g, "");
+  const withoutTags = withoutBlockId.replace(/(^|\s)#[^\s#]+/g, " ");
+  return withoutTags.replace(/\s+/g, " ").trim();
+}
+
+function cleanTaskDetail(value) {
+  return value
+    .trim()
+    .replace(/^[-*]\s+/, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function parseTasksFromMarkdown(file, content) {
+  const lines = stripFrontmatter(content).split("\n");
+  const tasks = [];
+  let current = null;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const match = line.match(/^(\s*)[-*]\s+\[([ xX])\]\s+(.*)$/);
+
+    if (match) {
+      if (current) tasks.push(current);
+      const rawText = match[3].trim();
+      current = {
+        file,
+        path: file.path,
+        line: index + 1,
+        checked: match[2].toLowerCase() === "x",
+        text: cleanTaskText(rawText) || rawText,
+        rawText,
+        details: [],
+      };
+      continue;
+    }
+
+    if (!current) continue;
+    if (!line.trim()) continue;
+    if (/^#{1,6}\s+/.test(line.trim())) continue;
+    if (/^\s{2,}\S/.test(line)) {
+      const detail = cleanTaskDetail(line);
+      if (detail) current.details.push(detail);
+    }
+  }
+
+  if (current) tasks.push(current);
+  return tasks;
+}
+
 class LifeVaultDashboardView extends ItemView {
   constructor(leaf, plugin) {
     super(leaf);
@@ -306,6 +372,7 @@ class LifeVaultDashboardView extends ItemView {
   async onOpen() {
     this.render();
     await this.refreshStatus();
+    await this.runTodoBoard();
     await this.runTimeSearch();
   }
 
@@ -331,11 +398,13 @@ class LifeVaultDashboardView extends ItemView {
     const headerActions = header.createDiv({ cls: "life-vault-actions" });
     this.addActionButton(headerActions, "刷新", "refresh-cw", async () => {
       await this.refreshStatus();
+      await this.runTodoBoard();
       await this.runTimeSearch();
     });
 
     const grid = shell.createDiv({ cls: "life-vault-dashboard__grid" });
     this.renderGitCard(grid);
+    this.renderTodoBoardCard(grid);
     this.renderTimeSearchCard(grid);
   }
 
@@ -435,6 +504,33 @@ class LifeVaultDashboardView extends ItemView {
     });
   }
 
+  renderTodoBoardCard(parent) {
+    const card = parent.createDiv({ cls: "life-vault-card" });
+    const cardHeader = card.createDiv({ cls: "life-vault-card__header" });
+    cardHeader.createEl("h2", {
+      cls: "life-vault-card__title",
+      text: "待办看板",
+    });
+    this.todoBoardMetaEl = cardHeader.createDiv({
+      cls: "life-vault-card__meta",
+      text: "扫描待办",
+    });
+
+    card.createDiv({
+      cls: "life-vault-card__hint",
+      text: "扫描全部笔记里的 checkbox 待办，只按是否完成显示卡片，不读取标签。",
+    });
+
+    const actions = card.createDiv({ cls: "life-vault-actions" });
+    this.addSearchButton(actions, "刷新待办", "list-checks", () => this.runTodoBoard());
+
+    this.todoBoardBodyEl = card.createDiv({ cls: "life-vault-task-board" });
+    this.todoBoardBodyEl.createDiv({
+      cls: "life-vault-empty",
+      text: "正在读取待办。",
+    });
+  }
+
   renderTimeSearchCard(parent) {
     const card = parent.createDiv({ cls: "life-vault-card" });
     const cardHeader = card.createDiv({ cls: "life-vault-card__header" });
@@ -456,14 +552,14 @@ class LifeVaultDashboardView extends ItemView {
     this.autoCreatedCheckbox = autoCreated.createEl("input", {
       attr: { type: "checkbox" },
     });
-    this.autoCreatedCheckbox.checked = this.plugin.settings.autoCreatedFrontmatter !== false;
+    this.autoCreatedCheckbox.checked = this.plugin.settings.autoCreatedFrontmatter === true;
     autoCreated.createEl("label", {
-      text: "自动维护 created / updated 时间",
+      text: "新建笔记时自动补 created 时间",
     });
     this.autoCreatedCheckbox.addEventListener("change", async () => {
       this.plugin.settings.autoCreatedFrontmatter = this.autoCreatedCheckbox.checked;
       await this.plugin.saveSettings();
-      new Notice(this.autoCreatedCheckbox.checked ? "已开启时间信息自动维护" : "已关闭时间信息自动维护");
+      new Notice(this.autoCreatedCheckbox.checked ? "已开启新笔记时间信息" : "已关闭新笔记时间信息");
     });
 
     const controls = card.createDiv({ cls: "life-vault-search-controls" });
@@ -625,6 +721,77 @@ class LifeVaultDashboardView extends ItemView {
     this.renderTimeSearchResults(results, { from, to });
   }
 
+  async runTodoBoard() {
+    const tasks = await this.plugin.getTodoTasks();
+    this.renderTodoBoard(tasks);
+  }
+
+  renderTodoBoard(tasks) {
+    if (!this.todoBoardBodyEl) return;
+
+    const openTasks = tasks.filter((task) => !task.checked);
+    const doneTasks = tasks.filter((task) => task.checked);
+    this.todoBoardMetaEl?.setText(`${openTasks.length} 个未完成，${doneTasks.length} 个已完成`);
+
+    this.todoBoardBodyEl.empty();
+    if (!openTasks.length) {
+      this.todoBoardBodyEl.createDiv({
+        cls: "life-vault-empty",
+        text: "没有未完成待办。",
+      });
+    } else {
+      const list = this.todoBoardBodyEl.createDiv({ cls: "life-vault-task-list" });
+      for (const task of openTasks) {
+        this.renderTaskCard(list, task);
+      }
+    }
+
+    if (doneTasks.length) {
+      const done = this.todoBoardBodyEl.createEl("details", { cls: "life-vault-task-done" });
+      done.createEl("summary", { text: `已完成 ${doneTasks.length} 项` });
+      const doneList = done.createDiv({ cls: "life-vault-task-list life-vault-task-list--done" });
+      for (const task of doneTasks.slice(0, 20)) {
+        this.renderTaskCard(doneList, task, true);
+      }
+      if (doneTasks.length > 20) {
+        done.createDiv({
+          cls: "life-vault-task-more",
+          text: `另外还有 ${doneTasks.length - 20} 项已完成待办。`,
+        });
+      }
+    }
+  }
+
+  renderTaskCard(parent, task, done = false) {
+    const card = parent.createDiv({
+      cls: `life-vault-task-card${done ? " life-vault-task-card--done" : ""}`,
+    });
+    card.setAttr("tabindex", "0");
+    card.createDiv({
+      cls: "life-vault-task-card__title",
+      text: task.text,
+    });
+    if (task.details.length) {
+      const detailList = card.createEl("ul", { cls: "life-vault-task-card__details" });
+      for (const detail of task.details.slice(0, 3)) {
+        detailList.createEl("li", { text: detail });
+      }
+    }
+    card.createDiv({
+      cls: "life-vault-task-card__source",
+      text: `${task.path}:${task.line}`,
+    });
+    card.addEventListener("click", () => {
+      this.app.workspace.getLeaf(false).openFile(task.file);
+    });
+    card.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        this.app.workspace.getLeaf(false).openFile(task.file);
+      }
+    });
+  }
+
   renderTimeSearchResults(results, query) {
     if (!this.timeSearchBodyEl) return;
 
@@ -754,11 +921,15 @@ class LifeVaultDashboardView extends ItemView {
       return;
     }
 
+    const timestampCount = await this.plugin.updateChangedMarkdownTimestamps(info.changedFiles);
     await this.plugin.runGit(["add", "-A"]);
     const result = await this.plugin.runGit(["commit", "-m", message], { timeout: 120000 });
     this.plugin.settings.lastCommitMessage = message;
     await this.plugin.saveSettings();
-    this.setOutput(this.plugin.formatResult("保存到本机", result));
+    const timestampOutput = timestampCount
+      ? `已更新 ${timestampCount} 个已修改笔记的 updated 时间。\n\n`
+      : "";
+    this.setOutput(`${timestampOutput}${this.plugin.formatResult("保存到本机", result)}`);
     new Notice("已保存到本机");
     await this.refreshStatus({ preserveOutput: true });
   }
@@ -825,13 +996,6 @@ module.exports = class LifeVaultDashboardPlugin extends Plugin {
         this.scheduleTimestampUpdate(file, 800);
       })
     );
-
-    this.registerEvent(
-      this.app.vault.on("modify", (file) => {
-        if (!(file instanceof TFile) || file.extension !== "md") return;
-        this.scheduleTimestampUpdate(file, 1200);
-      })
-    );
   }
 
   async onunload() {
@@ -862,7 +1026,7 @@ module.exports = class LifeVaultDashboardPlugin extends Plugin {
       this.timestampTimers.delete(file.path);
       const freshFile = this.app.vault.getAbstractFileByPath(file.path);
       if (freshFile instanceof TFile && freshFile.extension === "md") {
-        this.ensureTimestampFrontmatter(freshFile, { updateUpdated: true }).catch((error) => console.error(error));
+        this.ensureTimestampFrontmatter(freshFile, { updateUpdated: false }).catch((error) => console.error(error));
       }
     }, delay);
 
@@ -951,6 +1115,36 @@ module.exports = class LifeVaultDashboardPlugin extends Plugin {
       if (a.dateKey !== b.dateKey) return b.dateKey.localeCompare(a.dateKey);
       return b.file.stat.mtime - a.file.stat.mtime;
     });
+  }
+
+  async getTodoTasks() {
+    const tasks = [];
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      const content = await this.app.vault.cachedRead(file);
+      tasks.push(...parseTasksFromMarkdown(file, content));
+    }
+
+    return tasks.sort((a, b) => {
+      if (a.checked !== b.checked) return a.checked ? 1 : -1;
+      if (a.path !== b.path) return a.path.localeCompare(b.path, "zh-Hans-CN");
+      return a.line - b.line;
+    });
+  }
+
+  async updateChangedMarkdownTimestamps(changedFiles) {
+    let count = 0;
+    for (const line of changedFiles) {
+      const item = parsePorcelainLine(line);
+      if (item.status.includes("D")) continue;
+      if (!item.path.endsWith(".md")) continue;
+
+      const file = this.app.vault.getAbstractFileByPath(item.path);
+      if (!(file instanceof TFile) || file.extension !== "md") continue;
+
+      const changed = await this.ensureTimestampFrontmatter(file, { updateUpdated: true });
+      if (changed) count += 1;
+    }
+    return count;
   }
 
   async ensureTimestampFrontmatter(file, options = {}) {

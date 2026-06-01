@@ -295,6 +295,88 @@
   line-height: 1.45;
 }
 
+.life-vault-task-board {
+  display: grid;
+  gap: 12px;
+  margin-top: 12px;
+  max-height: 460px;
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.life-vault-task-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 10px;
+}
+
+.life-vault-task-card {
+  display: grid;
+  gap: 8px;
+  min-height: 108px;
+  padding: 12px;
+  border: 1px solid var(--lvd-border);
+  border-radius: 8px;
+  background: var(--lvd-card-strong);
+  cursor: pointer;
+}
+
+.life-vault-task-card:hover,
+.life-vault-task-card:focus {
+  border-color: var(--interactive-accent);
+}
+
+.life-vault-task-card--done {
+  opacity: 0.72;
+}
+
+.life-vault-task-card__title {
+  font-size: 14px;
+  font-weight: 650;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.life-vault-task-card__details {
+  display: grid;
+  gap: 4px;
+  margin: 0;
+  padding-left: 18px;
+  color: var(--lvd-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.life-vault-task-card__source {
+  align-self: end;
+  color: var(--lvd-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.life-vault-task-done {
+  border-top: 1px solid var(--lvd-border);
+  padding-top: 10px;
+}
+
+.life-vault-task-done summary {
+  cursor: pointer;
+  color: var(--lvd-muted);
+  font-size: 13px;
+  user-select: none;
+}
+
+.life-vault-task-done[open] summary {
+  margin-bottom: 10px;
+  color: var(--text-normal);
+}
+
+.life-vault-task-more {
+  margin-top: 8px;
+  color: var(--lvd-muted);
+  font-size: 12px;
+}
+
 .life-vault-search-controls {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
